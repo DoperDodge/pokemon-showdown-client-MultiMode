@@ -8,7 +8,7 @@
  * @license MIT
  */
 
-import { Pokemon, type Battle, type PPState, type ServerPokemon } from "./battle";
+import { Pokemon, type Battle, type PPState, type ServerPokemon, type Side } from "./battle";
 import { Dex, type ModdedDex, toID, type ID } from "./battle-dex";
 import type { BattleScene } from "./battle-animations";
 import { BattleLog } from "./battle-log";
@@ -328,12 +328,19 @@ export class BattleTooltips {
 			// mouse over active pokemon
 			// pokemon definitely exists, serverPokemon maybe
 			let sideIndex = parseInt(args[1], 10);
-			let side = this.battle.sides[+this.battle.viewpointSwitched ^ sideIndex];
+			let side: Side;
 			let activeIndex = parseInt(args[2], 10);
 			let pokemonIndex = activeIndex;
-			if (activeIndex >= 1 && this.battle.sides.length > 2) {
-				pokemonIndex -= 1;
-				side = this.battle.sides[side.n + 2];
+
+			if (this.battle.gameType === 'freeforall' && this.battle.sides.length > 4) {
+				// Mass FFA: sideIndex is the direct side index
+				side = this.battle.sides[sideIndex];
+			} else {
+				side = this.battle.sides[+this.battle.viewpointSwitched ^ sideIndex];
+				if (activeIndex >= 1 && this.battle.sides.length > 2) {
+					pokemonIndex -= 1;
+					side = this.battle.sides[side.n + 2];
+				}
 			}
 			let pokemon = side.active[activeIndex];
 			let serverPokemon = null;
@@ -554,9 +561,15 @@ export class BattleTooltips {
 		let text = '';
 
 		let zEffect = '';
-		let foeActive = [...pokemon.side.foe.active].reverse();
+		let foeActive: (Pokemon | null)[] = [];
 		if (this.battle.gameType === 'freeforall') {
-			foeActive = [...foeActive, ...pokemon.side.active].filter(active => active !== pokemon);
+			// Gather active Pokemon from all other sides
+			for (const side of this.battle.sides) {
+				if (side === pokemon.side) continue;
+				foeActive.push(...side.active);
+			}
+		} else {
+			foeActive = [...pokemon.side.foe.active].reverse();
 		}
 		// TODO: move this somewhere it makes more sense
 		if (pokemon.ability === '(suppressed)') serverPokemon.ability = '(suppressed)';
@@ -732,8 +745,9 @@ export class BattleTooltips {
 					text += '<p>&#x25ce; Can target distant Pok&eacute;mon in Triples.</p>';
 				}
 			} else if (this.battle.gameType === 'freeforall') {
+				const numFoes = this.battle.sides.length - 1;
 				if (move.target === 'allAdjacent' || move.target === 'allAdjacentFoes') {
-					text += '<p>&#x25ce; Hits all foes.</p>';
+					text += `<p>&#x25ce; Hits all ${numFoes} foes.</p>`;
 				} else if (move.target === 'adjacentAlly') {
 					text += '<p>&#x25ce; Can target any foe in Free-For-All.</p>';
 				}
@@ -1968,9 +1982,14 @@ export class BattleTooltips {
 		const [moveType, category] = this.getMoveType(move, value, forMaxMove);
 
 		const pokemon = value.pokemon;
-		let foeActive = [...pokemon.side.foe.active].reverse();
+		let foeActive: (Pokemon | null)[] = [];
 		if (this.battle.gameType === 'freeforall') {
-			foeActive = [...foeActive, ...pokemon.side.active].filter(active => active !== pokemon);
+			for (const side of this.battle.sides) {
+				if (side === pokemon.side) continue;
+				foeActive.push(...side.active);
+			}
+		} else {
+			foeActive = [...pokemon.side.foe.active].reverse();
 		}
 
 		if (this.battle.hardcoreMode) {
@@ -2457,14 +2476,20 @@ export class BattleTooltips {
 					value.modify(1.5, 'Steely Spirit');
 				}
 			}
-			for (const foe of pokemon.side.foe.active) {
-				if (!foe || foe.fainted) continue;
-				if (foe.ability === 'Fairy Aura' && moveType === 'Fairy') {
-					auraBoosted = 'Fairy Aura';
-				} else if (foe.ability === 'Dark Aura' && moveType === 'Dark') {
-					auraBoosted = 'Dark Aura';
-				} else if (foe.ability === 'Aura Break') {
-					auraBroken = true;
+			// Check all foe sides for aura abilities (supports N-player FFA)
+			const foeSides = this.battle.gameType === 'freeforall'
+				? this.battle.sides.filter(s => s !== pokemon.side)
+				: [pokemon.side.foe];
+			for (const foeSide of foeSides) {
+				for (const foe of foeSide.active) {
+					if (!foe || foe.fainted) continue;
+					if (foe.ability === 'Fairy Aura' && moveType === 'Fairy') {
+						auraBoosted = 'Fairy Aura';
+					} else if (foe.ability === 'Dark Aura' && moveType === 'Dark') {
+						auraBoosted = 'Dark Aura';
+					} else if (foe.ability === 'Aura Break') {
+						auraBroken = true;
+					}
 				}
 			}
 			if (auraBoosted) {
