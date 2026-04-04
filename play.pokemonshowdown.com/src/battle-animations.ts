@@ -760,8 +760,14 @@ export class BattleScene implements BattleSceneStub {
 			const side2 = side.ally;
 			this.$leftbar.html(this.getSidebarHTML(side, 'near2') + this.getSidebarHTML(side2, 'near'));
 		} else if (this.battle.sides.length > 2) { // FFA
-			const side2 = this.battle.sides[side.n === 0 ? 3 : 2];
-			this.$leftbar.html(this.getSidebarHTML(side2, 'near2') + this.getSidebarHTML(side, 'near'));
+			// Show the player's own side + adjacent sides on the left
+			let html = this.getSidebarHTML(side, 'near');
+			// In mass FFA, show additional near sides in a scrollable list
+			const nearSides = this.battle.sides.filter(s => !s.isFar && s !== side);
+			for (const s of nearSides) {
+				html = this.getSidebarHTML(s, 'near2') + html;
+			}
+			this.$leftbar.html(html);
 		} else {
 			this.$leftbar.html(this.getSidebarHTML(side, 'near'));
 		}
@@ -773,8 +779,13 @@ export class BattleScene implements BattleSceneStub {
 			const side2 = side.ally;
 			this.$rightbar.html(this.getSidebarHTML(side, 'far2') + this.getSidebarHTML(side2, 'far'));
 		} else if (this.battle.sides.length > 2) { // FFA
-			const side2 = this.battle.sides[side.n === 0 ? 3 : 2];
-			this.$rightbar.html(this.getSidebarHTML(side2, 'far2') + this.getSidebarHTML(side, 'far'));
+			// Show far sides in sidebar
+			let html = this.getSidebarHTML(side, 'far');
+			const farSides = this.battle.sides.filter(s => s.isFar && s !== side);
+			for (const s of farSides) {
+				html += this.getSidebarHTML(s, 'far2');
+			}
+			this.$rightbar.html(html);
 		} else {
 			this.$rightbar.html(this.getSidebarHTML(side, 'far'));
 		}
@@ -797,8 +808,19 @@ export class BattleScene implements BattleSceneStub {
 				$spritesContainer.empty();
 			}
 		}
+		const numSides = this.battle.sides.length;
+		const isMassFFA = this.battle.gameType === 'freeforall' && numSides > 4;
+
 		for (const side of this.battle.sides) {
-			side.z = (side.isFar ? 200 : 0);
+			if (isMassFFA) {
+				// Arrange players in a circular layout
+				const angle = (2 * Math.PI * side.n) / numSides - Math.PI / 2;
+				side.x = Math.cos(angle) * 80;
+				side.y = Math.sin(angle) * 30;
+				side.z = side.isFar ? 200 : 0;
+			} else {
+				side.z = (side.isFar ? 200 : 0);
+			}
 			side.missedPokemon?.sprite?.destroy();
 
 			side.missedPokemon = {
@@ -812,42 +834,62 @@ export class BattleScene implements BattleSceneStub {
 
 			side.missedPokemon.sprite.isMissedPokemon = true;
 		}
-		if (this.battle.sides.length > 2 && this.sideConditions.length === 2) {
-			this.sideConditions.push({}, {});
+		while (this.sideConditions.length < this.battle.sides.length) {
+			this.sideConditions.push({});
 		}
 		this.rebuildTooltips();
 	}
 	rebuildTooltips() {
 		let tooltipBuf = '';
-		const tooltips = this.battle.gameType === 'freeforall' ? {
-			// FFA battles are visually rendered as triple battle with the center slots empty
-			// so we swap the 2nd and 3rd tooltips on each side
-			p2b: { top: 70, left: 250, width: 80, height: 100, tooltip: 'activepokemon|1|1' },
-			p2a: { top: 90, left: 390, width: 100, height: 100, tooltip: 'activepokemon|1|0' },
-			p1a: { top: 200, left: 130, width: 120, height: 160, tooltip: 'activepokemon|0|0' },
-			p1b: { top: 200, left: 350, width: 150, height: 160, tooltip: 'activepokemon|0|1' },
-		} : {
-			p2c: { top: 70, left: 250, width: 80, height: 100, tooltip: 'activepokemon|1|2' },
-			p2b: { top: 85, left: 320, width: 90, height: 100, tooltip: 'activepokemon|1|1' },
-			p2a: { top: 90, left: 390, width: 100, height: 100, tooltip: 'activepokemon|1|0' },
-			p1a: { top: 200, left: 130, width: 120, height: 160, tooltip: 'activepokemon|0|0' },
-			p1b: { top: 200, left: 250, width: 150, height: 160, tooltip: 'activepokemon|0|1' },
-			p1c: { top: 200, left: 350, width: 150, height: 160, tooltip: 'activepokemon|0|2' },
-		};
-		for (const id in tooltips) {
-			let layout = tooltips[id as 'p1a'];
-			tooltipBuf += `<div class="has-tooltip" style="position:absolute;`;
-			tooltipBuf += `top:${layout.top}px;left:${layout.left}px;width:${layout.width}px;height:${layout.height}px;`;
-			tooltipBuf += `" data-id="${id}" data-tooltip="${layout.tooltip}" data-ownheight="1"></div>`;
+		if (this.battle.gameType === 'freeforall' && this.battle.sides.length > 4) {
+			// Mass FFA: dynamically generate tooltip regions for all sides
+			const numSides = this.battle.sides.length;
+			const fieldWidth = 480;
+			const fieldHeight = 360;
+			// Arrange players in a circle/grid
+			for (let i = 0; i < numSides; i++) {
+				const angle = (2 * Math.PI * i) / numSides - Math.PI / 2;
+				const cx = fieldWidth / 2 + Math.cos(angle) * (fieldWidth * 0.35);
+				const cy = fieldHeight / 2 + Math.sin(angle) * (fieldHeight * 0.3);
+				const w = Math.max(60, 120 - numSides * 2);
+				const h = Math.max(60, 140 - numSides * 2);
+				tooltipBuf += `<div class="has-tooltip" style="position:absolute;`;
+				tooltipBuf += `top:${Math.floor(cy - h / 2)}px;left:${Math.floor(cx - w / 2)}px;width:${w}px;height:${h}px;`;
+				tooltipBuf += `" data-id="p${i + 1}a" data-tooltip="activepokemon|${i}|0" data-ownheight="1"></div>`;
+			}
+		} else {
+			const tooltips = this.battle.gameType === 'freeforall' ? {
+				// FFA battles (4 players) rendered as triple battle with center slots empty
+				p2b: { top: 70, left: 250, width: 80, height: 100, tooltip: 'activepokemon|1|1' },
+				p2a: { top: 90, left: 390, width: 100, height: 100, tooltip: 'activepokemon|1|0' },
+				p1a: { top: 200, left: 130, width: 120, height: 160, tooltip: 'activepokemon|0|0' },
+				p1b: { top: 200, left: 350, width: 150, height: 160, tooltip: 'activepokemon|0|1' },
+			} : {
+				p2c: { top: 70, left: 250, width: 80, height: 100, tooltip: 'activepokemon|1|2' },
+				p2b: { top: 85, left: 320, width: 90, height: 100, tooltip: 'activepokemon|1|1' },
+				p2a: { top: 90, left: 390, width: 100, height: 100, tooltip: 'activepokemon|1|0' },
+				p1a: { top: 200, left: 130, width: 120, height: 160, tooltip: 'activepokemon|0|0' },
+				p1b: { top: 200, left: 250, width: 150, height: 160, tooltip: 'activepokemon|0|1' },
+				p1c: { top: 200, left: 350, width: 150, height: 160, tooltip: 'activepokemon|0|2' },
+			};
+			for (const id in tooltips) {
+				let layout = tooltips[id as 'p1a'];
+				tooltipBuf += `<div class="has-tooltip" style="position:absolute;`;
+				tooltipBuf += `top:${layout.top}px;left:${layout.left}px;width:${layout.width}px;height:${layout.height}px;`;
+				tooltipBuf += `" data-id="${id}" data-tooltip="${layout.tooltip}" data-ownheight="1"></div>`;
+			}
 		}
 		this.$tooltips.html(tooltipBuf);
 	}
 
 	teamPreview() {
 		let newBGNum = 0;
-		for (let siden = 0; siden < 2 || (this.battle.gameType === 'multi' && siden < 4); siden++) {
+		for (let siden = 0; siden < this.battle.sides.length; siden++) {
 			let side = this.battle.sides[siden];
-			const spriteIndex = +this.battle.viewpointSwitched ^ (siden % 2);
+			// For mass FFA (>4 sides), map: own side = near (0), others = far (1)
+			const spriteIndex = this.battle.sides.length > 4
+				? (side.isFar ? 1 : 0)
+				: +this.battle.viewpointSwitched ^ (siden % 2);
 			let textBuf = '';
 			let buf = '';
 			let buf2 = '';

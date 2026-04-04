@@ -12,7 +12,7 @@ import { Dex, toID, type ID } from "./battle-dex";
 
 export type Args = [string, ...string[]];
 export type KWArgs = { [kw: string]: string };
-export type SideID = 'p1' | 'p2' | 'p3' | 'p4';
+export type SideID = 'p1' | 'p2' | 'p3' | 'p4' | (string & {});
 
 export class BattleTextParser {
 	/** escaped for string.replace */
@@ -23,6 +23,8 @@ export class BattleTextParser {
 	p3 = "Player 3";
 	/** escaped for string.replace */
 	p4 = "Player 4";
+	/** Dynamic player names for p5+ (Mass FFA) */
+	playerNames: { [key: string]: string } = {};
 	perspective: SideID;
 	gen = 9;
 	turn = 0;
@@ -209,7 +211,7 @@ export class BattleTextParser {
 		}
 
 		case '-ability': {
-			if (args[3] && (args[3].startsWith('p1') || args[3].startsWith('p2') || args[3] === 'boost')) {
+			if (args[3] && (/^p\d+/.test(args[3]) || args[3] === 'boost')) {
 				args[4] = args[3];
 				args[3] = '';
 			}
@@ -268,16 +270,19 @@ export class BattleTextParser {
 	pokemonName = (pokemon: string) => {
 		if (!pokemon) return '';
 		if (!pokemon.startsWith('p')) return `???pokemon:${pokemon}???`;
-		if (pokemon.charAt(3) === ':') return BattleTextParser.escapeReplace(pokemon.slice(4).trim());
-		else if (pokemon.charAt(2) === ':') return BattleTextParser.escapeReplace(pokemon.slice(3).trim());
+		// Handle multi-digit player numbers: p1a: Name, p10a: Name, p1: Name, p10: Name
+		const colonIdx = pokemon.indexOf(':');
+		if (colonIdx >= 2) return BattleTextParser.escapeReplace(pokemon.slice(colonIdx + 1).trim());
 		return `???pokemon:${pokemon}???`;
 	};
 
 	/** Returns a string escaped for passing into the second argument of string.replace */
 	pokemon(pokemon: string) {
 		if (!pokemon) return '';
-		let side = pokemon.slice(0, 2);
-		if (!['p1', 'p2', 'p3', 'p4'].includes(side)) return `???pokemon:${pokemon}???`;
+		// Extract side ID (p1, p2, ..., p100) from pokemon string
+		const sideMatch = /^(p\d+)/.exec(pokemon);
+		if (!sideMatch) return `???pokemon:${pokemon}???`;
+		let side = sideMatch[1];
 		const name = this.pokemonName(pokemon);
 		const isNear = side === this.perspective || side === BattleTextParser.allyID(side as SideID);
 		const template = BattleText.default[isNear ? 'pokemon' : 'opposingPokemon'];
@@ -289,29 +294,37 @@ export class BattleTextParser {
 		const nickname = this.pokemonName(pokemon);
 
 		const species = details.split(',')[0];
-		if (nickname === species) return [pokemon.slice(0, 2), `**${species}**`];
-		return [pokemon.slice(0, 2), `${nickname} (**${species}**)`];
+		// Extract side ID (multi-digit safe)
+		const sideId = (/^(p\d+)/.exec(pokemon) || ['', pokemon.slice(0, 2)])[1];
+		if (nickname === species) return [sideId, `**${species}**`];
+		return [sideId, `${nickname} (**${species}**)`];
 	}
 
 	trainer(side: string) {
-		side = side.slice(0, 2);
-		if (side === 'p1') return this.p1;
-		if (side === 'p2') return this.p2;
-		if (side === 'p3') return this.p3;
-		if (side === 'p4') return this.p4;
-		return `???side:${side}???`;
+		// Extract full side ID (multi-digit safe)
+		const sideMatch = /^(p\d+)/.exec(side);
+		const sideId = sideMatch ? sideMatch[1] : side.slice(0, 2);
+		if (sideId === 'p1') return this.p1;
+		if (sideId === 'p2') return this.p2;
+		if (sideId === 'p3') return this.p3;
+		if (sideId === 'p4') return this.p4;
+		if (this.playerNames[sideId]) return this.playerNames[sideId];
+		return `???side:${sideId}???`;
 	}
 
 	static allyID(sideid: SideID): SideID | '' {
+		// Multi battle allies: p1↔p3, p2↔p4
 		if (sideid === 'p1') return 'p3';
 		if (sideid === 'p2') return 'p4';
 		if (sideid === 'p3') return 'p1';
 		if (sideid === 'p4') return 'p2';
+		// p5+ have no allies in FFA
 		return '';
 	}
 
 	team(side: string, isFar = false) {
-		side = side.slice(0, 2);
+		const sideMatch = /^(p\d+)/.exec(side);
+		side = sideMatch ? sideMatch[1] : side.slice(0, 2);
 		if (side === this.perspective || side === BattleTextParser.allyID(side as SideID)) {
 			return !isFar ? BattleText.default.team : BattleText.default.opposingTeam;
 		}
@@ -319,7 +332,8 @@ export class BattleTextParser {
 	}
 
 	own(side: string) {
-		side = side.slice(0, 2);
+		const sideMatch = /^(p\d+)/.exec(side);
+		side = sideMatch ? sideMatch[1] : side.slice(0, 2);
 		if (side === this.perspective) {
 			return 'OWN';
 		}
@@ -327,7 +341,8 @@ export class BattleTextParser {
 	}
 
 	party(side: string) {
-		side = side.slice(0, 2);
+		const sideMatch = /^(p\d+)/.exec(side);
+		side = sideMatch ? sideMatch[1] : side.slice(0, 2);
 		if (side === this.perspective || side === BattleTextParser.allyID(side as SideID)) {
 			return BattleText.default.party;
 		}
@@ -470,14 +485,13 @@ export class BattleTextParser {
 		switch (cmd) {
 		case 'player': {
 			const [, side, name] = args;
-			if (side === 'p1' && name) {
-				this.p1 = BattleTextParser.escapeReplace(name);
-			} else if (side === 'p2' && name) {
-				this.p2 = BattleTextParser.escapeReplace(name);
-			} else if (side === 'p3' && name) {
-				this.p3 = BattleTextParser.escapeReplace(name);
-			} else if (side === 'p4' && name) {
-				this.p4 = BattleTextParser.escapeReplace(name);
+			if (name) {
+				const escaped = BattleTextParser.escapeReplace(name);
+				if (side === 'p1') this.p1 = escaped;
+				else if (side === 'p2') this.p2 = escaped;
+				else if (side === 'p3') this.p3 = escaped;
+				else if (side === 'p4') this.p4 = escaped;
+				else this.playerNames[side] = escaped;
 			}
 			return '';
 		}

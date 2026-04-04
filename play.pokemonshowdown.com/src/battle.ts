@@ -657,7 +657,7 @@ export class Side {
 	constructor(battle: Battle, n: number) {
 		this.battle = battle;
 		this.n = n;
-		this.sideid = ['p1', 'p2', 'p3', 'p4'][n] as SideID;
+		this.sideid = `p${n + 1}` as SideID;
 		this.isFar = !!(n % 2);
 	}
 
@@ -1340,6 +1340,11 @@ export class Battle {
 		this.p2 = null!;
 		this.p3 = null!;
 		this.p4 = null!;
+		// Clean up dynamic sides (p5+)
+		for (let i = 4; i < 100; i++) {
+			const key = `p${i + 1}` as SideID;
+			if ((this as any)[key]) (this as any)[key] = null!;
+		}
 	}
 
 	log(args: Args, kwArgs?: KWArgs, preempt?: boolean) {
@@ -1354,25 +1359,36 @@ export class Battle {
 	}
 	setViewpoint(sideid: SideID) {
 		if (this.mySide.sideid === sideid) return;
-		if (sideid.length !== 2 || !sideid.startsWith('p')) return;
-		const side = this[sideid];
-		if (!side) return;
+		if (!sideid.startsWith('p')) return;
+		const side = this.getSide(sideid);
+		if (!side || !side.n && side.n !== 0) return;
 		this.mySide = side;
 
-		if ((side.n % 2) === this.p1.n) {
-			this.viewpointSwitched = false;
-			this.nearSide = this.p1;
-			this.farSide = this.p2;
+		if (this.gameType === 'freeforall' && this.sides.length > 4) {
+			// Mass FFA: the selected side is near, all others are far
+			this.viewpointSwitched = (side.n !== 0);
+			this.nearSide = side;
+			this.farSide = this.sides[side.n === 0 ? 1 : 0];
+			for (const s of this.sides) {
+				s.isFar = (s !== side);
+			}
 		} else {
-			this.viewpointSwitched = true;
-			this.nearSide = this.p2;
-			this.farSide = this.p1;
-		}
-		this.nearSide.isFar = false;
-		this.farSide.isFar = true;
-		if (this.sides.length > 2) {
-			this.sides[this.nearSide.n + 2].isFar = false;
-			this.sides[this.farSide.n + 2].isFar = true;
+			if ((side.n % 2) === this.p1.n) {
+				this.viewpointSwitched = false;
+				this.nearSide = this.p1;
+				this.farSide = this.p2;
+			} else {
+				this.viewpointSwitched = true;
+				this.nearSide = this.p2;
+				this.farSide = this.p1;
+			}
+			this.nearSide.isFar = false;
+			this.farSide.isFar = true;
+			if (this.sides.length > 2) {
+				for (let i = 2; i < this.sides.length; i++) {
+					this.sides[i].isFar = (this.sides[i].n % 2) !== this.nearSide.n;
+				}
+			}
 		}
 
 		this.resetToCurrentTurn();
@@ -1470,21 +1486,26 @@ export class Battle {
 		];
 		if (this.gameType === 'freeforall') {
 			// Court Change rotates side conditions clockwise in a free-for-all
+			const numSides = this.sides.length;
 
 			// the list of all sides in clockwise order
-			const sides = [this.sides[0], this.sides[3], this.sides[1], this.sides[2]];
-			const temp: { [k: number]: Side["sideConditions"] } = { 0: {}, 1: {}, 2: {}, 3: {} };
+			// For 4 players: [0, 3, 1, 2]. For N players: just use natural order.
+			const sides = numSides === 4
+				? [this.sides[0], this.sides[3], this.sides[1], this.sides[2]]
+				: this.sides.slice();
+			const temp: { [k: number]: Side["sideConditions"] } = {};
 			for (const side of sides) {
+				temp[side.n] = {};
 				for (const id in side.sideConditions) {
 					if (!sideConditions.includes(id)) continue;
 					temp[side.n][id] = side.sideConditions[id];
 					side.removeSideCondition(id);
 				}
 			}
-			for (let i = 0; i < 4; i++) {
-				const sourceSide = sides[i]; // the current side in rotation
+			for (let i = 0; i < sides.length; i++) {
+				const sourceSide = sides[i];
 				const sourceSideConditions = temp[sourceSide.n];
-				const targetSide = sides[(i + 1) % 4]; // the next side in rotation
+				const targetSide = sides[(i + 1) % sides.length];
 				for (const id in sourceSideConditions) {
 					targetSide.sideConditions[id] = sourceSideConditions[id];
 					this.scene.addSideCondition(targetSide.n, id as ID);
@@ -3344,15 +3365,18 @@ export class Battle {
 
 		let siden = -1;
 		let slot = -1; // if there is an explicit slot for this pokemon
-		if (/^p[1-9]($|: )/.test(name)) {
-			siden = parseInt(name.charAt(1), 10) - 1;
-			name = name.slice(4);
-		} else if (/^p[1-9][a-f]: /.test(name)) {
+		// Match pN: or pNN: (multi-digit player numbers for Mass FFA)
+		const sideMatch = /^p(\d+)($|: )/.exec(name);
+		const slotMatch = /^p(\d+)([a-f]): /.exec(name);
+		if (slotMatch) {
 			const slotChart: { [k: string]: number } = { a: 0, b: 1, c: 2, d: 3, e: 4, f: 5 };
-			siden = parseInt(name.charAt(1), 10) - 1;
-			slot = slotChart[name.charAt(2)];
-			name = name.slice(5);
+			siden = parseInt(slotMatch[1], 10) - 1;
+			slot = slotChart[slotMatch[2]];
+			name = name.slice(slotMatch[0].length);
 			pokemonid = `p${siden + 1}: ${name}`;
+		} else if (sideMatch) {
+			siden = parseInt(sideMatch[1], 10) - 1;
+			name = name.slice(sideMatch[0].length);
 		}
 		return { name, siden, slot, pokemonid };
 	}
@@ -3432,10 +3456,12 @@ export class Battle {
 		return null;
 	}
 	getSide(sidename: string): Side {
-		if (sidename === 'p1' || sidename.startsWith('p1:')) return this.p1;
-		if (sidename === 'p2' || sidename.startsWith('p2:')) return this.p2;
-		if ((sidename === 'p3' || sidename.startsWith('p3:')) && this.p3) return this.p3;
-		if ((sidename === 'p4' || sidename.startsWith('p4:')) && this.p4) return this.p4;
+		// Dynamic pN lookup: extract player number and use sides array
+		const pMatch = /^p(\d+)($|:)/.exec(sidename);
+		if (pMatch) {
+			const n = parseInt(pMatch[1], 10) - 1;
+			if (n >= 0 && n < this.sides.length) return this.sides[n];
+		}
 		if (this.nearSide.id === sidename) return this.nearSide;
 		if (this.farSide.id === sidename) return this.farSide;
 		if (this.nearSide.name === sidename) return this.nearSide;
@@ -3533,9 +3559,16 @@ export class Battle {
 				this.p3.isFar = this.p1.isFar;
 				this.p4.isFar = this.p2.isFar;
 				this.sides = [this.p1, this.p2, this.p3, this.p4];
-				// intentionally sync p1/p3 and p2/p4's active arrays
-				this.p1.active = this.p3.active = [null, null];
-				this.p2.active = this.p4.active = [null, null];
+				if (args[1] === 'multi') {
+					// intentionally sync p1/p3 and p2/p4's active arrays
+					this.p1.active = this.p3.active = [null, null];
+					this.p2.active = this.p4.active = [null, null];
+				} else {
+					// FFA: each side has its own active array with 1 slot
+					for (const side of this.sides) {
+						side.active = [null];
+					}
+				}
 				break;
 			case 'doubles':
 				this.nearSide.active = [null, null];
@@ -3655,6 +3688,22 @@ export class Battle {
 			break;
 		}
 		case 'player': {
+			// Dynamically create sides for Mass FFA (p5+)
+			const playerMatch = /^p(\d+)$/.exec(args[1]);
+			if (playerMatch) {
+				const n = parseInt(playerMatch[1], 10) - 1;
+				if (n >= this.sides.length && this.gameType === 'freeforall') {
+					// Create all missing sides up to n
+					for (let i = this.sides.length; i <= n; i++) {
+						const newSide = new Side(this, i);
+						newSide.foe = this.sides[0]; // default foe
+						newSide.isFar = true;
+						newSide.active = [null];
+						this.sides.push(newSide);
+						(this as any)[`p${i + 1}`] = newSide;
+					}
+				}
+			}
 			let side = this.getSide(args[1]);
 			side.setName(args[2]);
 			if (args[3]) side.setAvatar(args[3]);
@@ -3688,8 +3737,9 @@ export class Battle {
 			break;
 		}
 		case 'clearpoke': {
-			this.p1.clearPokemon();
-			this.p2.clearPokemon();
+			for (const side of this.sides) {
+				side.clearPokemon();
+			}
 			break;
 		}
 		case 'poke': {
