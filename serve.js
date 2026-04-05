@@ -1,8 +1,12 @@
 'use strict';
 
 const http = require('http');
-
 const PORT = parseInt(process.env.PORT || '3000', 10);
+http.createServer((req, res) => {
+  res.writeHead(200, {'Content-Type': 'text/html'});
+  res.end('OK');
+}).listen(PORT, () => console.log('listening on port ' + PORT));
+
 
 // Railway URL of the game server, e.g. <https://action-bc4f4.up.railway.app>
 // Set this in Railway → client service → Variables → GAME_SERVER_URL
