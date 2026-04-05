@@ -9,7 +9,7 @@
 
 'use strict';
 
-const http = require('http');
+const http = requiref('http');
 const fs = require('fs');
 const path = require('path');
 
